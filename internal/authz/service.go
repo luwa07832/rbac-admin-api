@@ -83,12 +83,38 @@ func (s *Service) loadSnapshot(subject string) (*snapshot, error) {
 		permOperations: map[string]map[string]bool{},
 	}}
 
-	bindingVersions, err := s.store.ListBindingVersions(subject)
+	bindings, scopes, err := s.loadSubjectRows(subject)
 	if err != nil {
 		return nil, err
 	}
+	snap.bindings = bindings
+	snap.scopes = scopes
+
+	rolePermRows, err := s.loadRolePermissionRows()
+	if err != nil {
+		return nil, err
+	}
+	snap.rolePerm = rolePermRows
+
+	model, err := s.loadRoleModel()
+	if err != nil {
+		return nil, err
+	}
+	snap.roleModel = model
+	return snap, nil
+}
+
+// loadSubjectRows reads one subject's binding and scoped authorization
+// interval versions. Scope rows that no longer parse are dropped, matching
+// the read model everywhere else.
+func (s *Service) loadSubjectRows(subject string) ([]bindingRow, []scopeRow, error) {
+	bindingVersions, err := s.store.ListBindingVersions(subject)
+	if err != nil {
+		return nil, nil, err
+	}
+	bindings := make([]bindingRow, 0, len(bindingVersions))
 	for _, version := range bindingVersions {
-		snap.bindings = append(snap.bindings, bindingRow{
+		bindings = append(bindings, bindingRow{
 			seq:           version.Seq,
 			roleID:        version.RoleID,
 			event:         version.Event,
@@ -99,22 +125,17 @@ func (s *Service) loadSnapshot(subject string) (*snapshot, error) {
 		})
 	}
 
-	rolePermRows, err := s.loadRolePermissionRows()
-	if err != nil {
-		return nil, err
-	}
-	snap.rolePerm = rolePermRows
-
 	scopeVersions, err := s.store.ListScopeVersions(subject)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	scopes := []scopeRow{}
 	for _, version := range scopeVersions {
 		parsedScope, ok := parseScope(version.ScopeText)
 		if !ok {
 			continue
 		}
-		snap.scopes = append(snap.scopes, scopeRow{
+		scopes = append(scopes, scopeRow{
 			seq:           version.Seq,
 			roleID:        version.RoleID,
 			permissionID:  version.PermissionID,
@@ -126,13 +147,7 @@ func (s *Service) loadSnapshot(subject string) (*snapshot, error) {
 			id:            version.ID,
 		})
 	}
-
-	model, err := s.loadRoleModel()
-	if err != nil {
-		return nil, err
-	}
-	snap.roleModel = model
-	return snap, nil
+	return bindings, scopes, nil
 }
 
 // loadRoleModel reads the current inheritance graph and static permission

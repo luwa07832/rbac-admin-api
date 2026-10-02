@@ -55,6 +55,7 @@ func NewRouter(st *store.Store) *gin.Engine {
 	router.GET("/history", historyHandler(service))
 	router.GET("/subjects/:id/access", accessHandler(service))
 	router.GET("/roles/:role/permissions", rolePermissionsHandler(service))
+	router.GET("/resources/:resource/subjects", resourceSubjectsHandler(service))
 
 	router.NoRoute(func(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{"code": "route_not_found", "message": "no route matches this path"}})
