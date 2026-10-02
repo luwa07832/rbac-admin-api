@@ -93,7 +93,7 @@ func listAccess(snap *snapshot, at string) []AccessItem {
 	seen := map[string]bool{}
 	add := func(source, boundRole, role, permission, scope string) {
 		operations := sortedOperations(snap.permOperations[permission])
-		key := strings.Join([]string{source, boundRole, role, permission, scope, strings.Join(operations, "\x00")}, "\x00")
+		key := accessKey(source, boundRole, role, permission, operations, scope)
 		if seen[key] {
 			return
 		}
@@ -130,6 +130,106 @@ func listAccess(snap *snapshot, at string) []AccessItem {
 
 	sort.SliceStable(items, func(i, j int) bool { return accessLess(items[i], items[j]) })
 	return items
+}
+
+// AccessDiffInput compares one subject's effective paths at two moments.
+type AccessDiffInput struct {
+	Subject string
+	From    string
+	To      string
+}
+
+// AccessDiffView holds the symmetric difference of the paths effective at
+// the two moments; from and to carry the canonical UTC texts.
+type AccessDiffView struct {
+	From      string       `json:"from"`
+	To        string       `json:"to"`
+	Added     []AccessItem `json:"added"`
+	Removed   []AccessItem `json:"removed"`
+	Unchanged []AccessItem `json:"unchanged"`
+}
+
+// AccessDiff lists which of the subject's effective authorization paths were
+// added, removed or kept between two moments. Both moments are mandatory and
+// the query is read-only. Timing validation outranks subject validation, with
+// from reported before to; equal moments are a normal request.
+func (s *Service) AccessDiff(in AccessDiffInput) (*AccessDiffView, *Failure) {
+	if in.From == "" {
+		return nil, invalidRequest("from", "from query parameter is required")
+	}
+	if in.To == "" {
+		return nil, invalidRequest("to", "to query parameter is required")
+	}
+	fromTime, fail := ParseTime(in.From)
+	if fail != nil {
+		fail.Field = "from"
+		return nil, fail
+	}
+	toTime, fail := ParseTime(in.To)
+	if fail != nil {
+		fail.Field = "to"
+		return nil, fail
+	}
+	if fromTime.After(toTime) {
+		return nil, failure(TypeInvalidRange, "", "the range start must not be later than the range end")
+	}
+	if !validIdentifier(in.Subject) {
+		return nil, invalidRequest("subject", "field subject is not a parseable identifier")
+	}
+	if exists, err := s.store.Exists(store.CatalogSubject, in.Subject); err != nil || !exists {
+		return nil, notFoundOrInternal("subject", err, !exists)
+	}
+
+	snap, err := s.loadSnapshot(in.Subject)
+	if err != nil {
+		return nil, failure(TypeInvalidRequest, "", "could not evaluate access diff")
+	}
+	fromItems := listAccess(snap, FormatTime(fromTime))
+	toItems := listAccess(snap, FormatTime(toTime))
+
+	fromKeys := map[string]bool{}
+	for _, item := range fromItems {
+		fromKeys[itemKey(item)] = true
+	}
+	toKeys := map[string]bool{}
+	for _, item := range toItems {
+		toKeys[itemKey(item)] = true
+	}
+
+	view := &AccessDiffView{
+		From:      FormatTime(fromTime),
+		To:        FormatTime(toTime),
+		Added:     []AccessItem{},
+		Removed:   []AccessItem{},
+		Unchanged: []AccessItem{},
+	}
+	// listAccess already deduplicates and orders both lists, so membership
+	// filtering preserves the published ordering.
+	for _, item := range toItems {
+		if fromKeys[itemKey(item)] {
+			view.Unchanged = append(view.Unchanged, item)
+		} else {
+			view.Added = append(view.Added, item)
+		}
+	}
+	for _, item := range fromItems {
+		if !toKeys[itemKey(item)] {
+			view.Removed = append(view.Removed, item)
+		}
+	}
+	return view, nil
+}
+
+// itemKey renders one effective path's full field combination for identity.
+func itemKey(item AccessItem) string {
+	return accessKey(item.Source, pointerText(item.BoundRole), pointerText(item.Role),
+		item.Permission, item.Operations, item.Scope)
+}
+
+// accessKey joins the complete path combination with a field separator that no
+// identifier or operation text can contain.
+func accessKey(source, boundRole, role, permission string, operations []string, scope string) string {
+	return strings.Join([]string{source, boundRole, role, permission, scope, strings.Join(operations, "\x00")}, "\x00")
 }
 
 // sortedOperations renders the permission's static operation set as a

@@ -69,6 +69,21 @@ func accessHandler(service *authz.Service) gin.HandlerFunc {
 	}
 }
 
+func accessDiffHandler(service *authz.Service) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		view, fail := service.AccessDiff(authz.AccessDiffInput{
+			Subject: pathParam(c, "id"),
+			From:    c.Query("from"),
+			To:      c.Query("to"),
+		})
+		if fail != nil {
+			writeFailure(c, fail)
+			return
+		}
+		c.JSON(http.StatusOK, view)
+	}
+}
+
 func rolePermissionsHandler(service *authz.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		view, fail := service.RolePermissions(authz.RolePermissionsInput{

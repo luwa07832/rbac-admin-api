@@ -54,6 +54,7 @@ func NewRouter(st *store.Store) *gin.Engine {
 	router.POST("/authorize", authorizeHandler(service))
 	router.GET("/history", historyHandler(service))
 	router.GET("/subjects/:id/access", accessHandler(service))
+	router.GET("/subjects/:id/access/diff", accessDiffHandler(service))
 	router.GET("/roles/:role/permissions", rolePermissionsHandler(service))
 	router.GET("/resources/:resource/subjects", resourceSubjectsHandler(service))
 
