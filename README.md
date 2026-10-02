@@ -117,6 +117,47 @@ go run .
 角色层。同一时刻命中多条时，范围更具体者优先（精确 > 更长前缀 > 前缀 > `*`），再按权限点、
 角色标识字典序决胜。
 
+## `POST /authorize/batch`
+
+在同一个时刻批量判定多组「主体 / 资源 / 操作」三元组。请求体只含可选的 `effectiveAt`
+与必填的 `queries`；`effectiveAt` 省略（或为 `null`）时表示当前时刻，否则是整批共用的
+RFC3339 时刻，输出规范化为 UTC。`queries` 是 1 到 100 项的数组，每项只含 `subject`、
+`resource`、`operation` 三个字符串字段，标识符沿用既有语法。
+
+```json
+{"effectiveAt":"2026-02-01T00:00:00Z","queries":[
+  {"subject":"user-1","resource":"tenant-a/doc-1","operation":"read"},
+  {"subject":"user-2","resource":"tenant-a/doc-1","operation":"read"}]}
+```
+
+成功返回 200，顶层为 `decisions` 数组，顺序与 `queries` 完全一致，重复三元组不合并：
+
+```json
+{"decisions":[
+  {"subject":"user-1","resource":"tenant-a/doc-1","operation":"read",
+   "decision":{"granted":true,"matchedRole":"viewer","matchedPermission":"doc-read","matchedScope":"tenant-a/*"}},
+  {"subject":"user-2","resource":"tenant-a/doc-1","operation":"read",
+   "decision":{"granted":false,"reason":"NO_ROLE_BINDING"}}]}
+```
+
+- 每项都回显自己的 `subject`、`resource`、`operation` 与 `decision`；`decision` 与同一
+  `effectiveAt` 调用 `POST /authorize` 的结果逐字段一致：获权时为 `granted true` 加
+  `matchedRole`、`matchedPermission`、`matchedScope`（直接权限点命中时 `matchedRole` 为
+  `null`），拒绝时只有 `granted false` 与 `reason`，`reason` 固定为 `NO_ROLE_BINDING`、
+  `NO_PERMISSION_BINDING`、`OUT_OF_SCOPE`、`NOT_EFFECTIVE` 之一。
+- 角色继承、权限点静态覆盖、范围匹配与半开区间语义全部沿用单笔判定；无人获权是正常
+  decision，不视为错误。
+- 校验顺序固定：先校验整批结构与时间，再按下标逐项校验。任一异常都只返回单个 `error`
+  对象，不返回部分 `decisions`。
+- `queries` 缺失、不是数组、为空或超过 100 项，请求体不是 JSON 对象、含未知顶层字段，
+  均返回 `INVALID_REQUEST`（`field` 为 `queries` 或该未知字段名）；`effectiveAt` 给定时
+  必须是 RFC3339 字符串，非法或超范围返回 `INVALID_TIME`（`field` 为 `effectiveAt`），
+  并优先于一切单项检查；但整批结构错误仍优先于 `effectiveAt`。
+- 单项不是对象、缺字段、多字段（含未知字段）或字段类型错误返回 `INVALID_REQUEST`；
+  标识符非法返回 `INVALID_REQUEST`；合法但未注册返回 `NOT_FOUND`。单项按
+  subject、resource、operation 顺序检查，`field` 使用 `queries[0].subject` 这样的定位值，
+  下标从 0 开始并按数组顺序报告首个问题。
+
 ## `POST /authorize/explain`
 
 只读解释一次授权判定：请求体沿用 `POST /authorize` 的 `subject`、`resource`、`operation`
