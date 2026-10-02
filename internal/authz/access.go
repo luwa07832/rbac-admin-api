@@ -57,16 +57,34 @@ func (s *Service) Access(in AccessInput) ([]AccessItem, *Failure) {
 	if err != nil {
 		return nil, failure(TypeInvalidRequest, "", "could not evaluate access")
 	}
-	return listAccess(snap, FormatTime(at)), nil
+	return collectPaths(snap, FormatTime(at), pathFilter{}), nil
 }
 
-// listAccess flattens every authorization path active at the given instant:
+// pathFilter restricts collected paths to one resource/operation pair. Empty
+// fields keep the corresponding dimension unfiltered.
+type pathFilter struct {
+	resource  string
+	operation string
+}
+
+func (f pathFilter) covers(snap *snapshot, permission string, scope scopeRef) bool {
+	if f.resource != "" && !scope.matches(f.resource) {
+		return false
+	}
+	if f.operation != "" && !permissionCovers(snap, permission, f.operation) {
+		return false
+	}
+	return true
+}
+
+// collectPaths flattens every authorization path active at the given instant:
 // role-derived paths join an active binding, the inherited role's active
 // permission grant and an active scope on that same role, while direct
 // permission grants stand on their own. Overlapping interval versions of one
 // identity collapse into a single item, and the result is ordered by the
-// published field sequence.
-func listAccess(snap *snapshot, at string) []AccessItem {
+// published field sequence. filter optionally keeps only the paths whose scope
+// pattern and permission operation set cover one resource/operation pair.
+func collectPaths(snap *snapshot, at string, filter pathFilter) []AccessItem {
 	boundRoles := map[string]bool{}
 	for _, row := range snap.bindings {
 		if rowActive(row.effectiveFrom, row.effectiveTo, at) {
@@ -113,11 +131,17 @@ func listAccess(snap *snapshot, at string) []AccessItem {
 			continue
 		}
 		if row.permissionID != "" {
+			if !filter.covers(snap, row.permissionID, row.scope) {
+				continue
+			}
 			add(SourceDirectPermission, "", "", row.permissionID, row.scope.text)
 			continue
 		}
 		for pair := range activePairs {
 			if pair[0] != row.roleID {
+				continue
+			}
+			if !filter.covers(snap, pair[1], row.scope) {
 				continue
 			}
 			for boundRole := range boundRoles {

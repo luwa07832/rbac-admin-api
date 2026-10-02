@@ -78,10 +78,23 @@ type roleModel struct {
 }
 
 func (s *Service) loadSnapshot(subject string) (*snapshot, error) {
-	snap := &snapshot{roleModel: roleModel{
-		roleParents:    map[string][]string{},
-		permOperations: map[string]map[string]bool{},
-	}}
+	rolePermRows, err := s.loadRolePermissionRows()
+	if err != nil {
+		return nil, err
+	}
+
+	model, err := s.loadRoleModel()
+	if err != nil {
+		return nil, err
+	}
+	return s.loadSnapshotData(subject, model, rolePermRows)
+}
+
+// loadSnapshotData builds the per-subject read model on top of the shared,
+// history-free role model and role/permission rows, so reverse queries
+// spanning every subject load the global tables only once.
+func (s *Service) loadSnapshotData(subject string, model roleModel, rolePermRows []rolePermRow) (*snapshot, error) {
+	snap := &snapshot{roleModel: model, rolePerm: rolePermRows}
 
 	bindingVersions, err := s.store.ListBindingVersions(subject)
 	if err != nil {
@@ -98,12 +111,6 @@ func (s *Service) loadSnapshot(subject string) (*snapshot, error) {
 			id:            version.ID,
 		})
 	}
-
-	rolePermRows, err := s.loadRolePermissionRows()
-	if err != nil {
-		return nil, err
-	}
-	snap.rolePerm = rolePermRows
 
 	scopeVersions, err := s.store.ListScopeVersions(subject)
 	if err != nil {
@@ -126,12 +133,6 @@ func (s *Service) loadSnapshot(subject string) (*snapshot, error) {
 			id:            version.ID,
 		})
 	}
-
-	model, err := s.loadRoleModel()
-	if err != nil {
-		return nil, err
-	}
-	snap.roleModel = model
 	return snap, nil
 }
 

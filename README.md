@@ -174,6 +174,41 @@ GET /roles/viewer/permissions?effectiveAt=2026-02-01T00:00:00Z
   `INVALID_REQUEST`（`field` 为 `role`）；`effectiveAt` 非法或超出范围时唯一返回
   `INVALID_TIME`（`field` 为 `effectiveAt`），并优先于角色检查。
 
+## `GET /resources/{resource}/subjects`
+
+`GET /subjects/{id}/access` 的只读反向查询：给出指定资源与操作在指定时刻获权的全部主体。
+省略 `effectiveAt` 时取服务端当前时刻；含 `/` 的资源标识符写作 `%2F`，操作以 `operation`
+查询参数给出。查询不写入任何历史。
+
+```
+GET /resources/tenant-a%2Fdoc-1/subjects?operation=read&effectiveAt=2026-02-01T00:00:00Z
+```
+
+```json
+{"effectiveAt":"2026-02-01T00:00:00Z","resource":"tenant-a/doc-1","operation":"read","subjects":[
+  {"subject":"alice","paths":[
+   {"source":"ROLE","boundRole":"viewer","role":"base","permission":"doc-read","scope":"tenant-a/*"}]},
+  {"subject":"bob","paths":[
+   {"source":"DIRECT_PERMISSION","boundRole":null,"role":null,"permission":"doc-read","scope":"tenant-a/doc-1"}]}
+]}
+```
+
+- 主体按标识符字典序排列；每个主体的 `paths` 是去重后的生效路径，按 `source`、`boundRole`、
+  `role`、`permission`、`scope` 稳定排序。
+- 一条路径必须在 `effectiveAt` 同时满足三层有效区间：主体角色归属、角色到权限点授权（直接
+  权限点授权则跳过角色层）或直接权限点授权、主体授权范围。范围精确、`前缀/*` 或全量 `*`
+  命中资源即可；角色路径沿当前继承图可达，权限点静态覆盖该操作。
+- `source` 限于 `ROLE` 与 `DIRECT_PERMISSION`。`ROLE` 项的 `boundRole` 是主体直接绑定的
+  角色，`role` 是经继承实际承载权限点的角色；`DIRECT_PERMISSION` 项的 `boundRole` 与 `role`
+  均为 `null`。
+- 没有任何获权主体时返回 `{"subjects":[], ...}`，不视为错误；未生效、无角色链路或范围不
+  覆盖的主体一律不出现。
+- `effectiveAt` 不是合法 RFC3339 或超出范围时唯一返回 `INVALID_TIME`（`field` 为
+  `effectiveAt`），并先于其他检查；资源标识符非法返回 `INVALID_REQUEST`（`field` 为
+  `resource`），合法但不存在返回 `NOT_FOUND`（`field` 为 `resource`）；`operation` 缺失或
+  标识符非法返回 `INVALID_REQUEST`（`field` 为 `operation`），合法但不存在返回 `NOT_FOUND`
+  （`field` 为 `operation`）。资源检查先于操作检查。
+
 ## `GET /history`
 
 按三元组查询与之相关的授权变更，按 `effectiveFrom` 从早到晚排列；同一时刻按 `occurredAt`
