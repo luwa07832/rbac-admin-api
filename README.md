@@ -117,6 +117,43 @@ go run .
 角色层。同一时刻命中多条时，范围更具体者优先（精确 > 更长前缀 > 前缀 > `*`），再按权限点、
 角色标识字典序决胜。
 
+## `GET /subjects/{id}/access`
+
+只读查看某个主体在指定时刻生效的全部授权路径，不写入新的历史记录。
+`effectiveAt` 可选，省略时取当前时刻；含 `/` 的主体标识符按百分号编码为
+`%2F`。
+
+```
+GET /subjects/user-1/access?effectiveAt=2026-02-01T00:00:00Z
+```
+
+```json
+{"access":[
+  {"source":"DIRECT_PERMISSION","boundRole":null,"role":null,
+   "permission":"doc-read","operations":["read","write"],"scope":"tenant-a/doc-2"},
+  {"source":"ROLE","boundRole":"viewer","role":"base",
+   "permission":"doc-read","operations":["read"],"scope":"tenant-a/*"}
+]}
+```
+
+- `source` 只能是 `ROLE` 或 `DIRECT_PERMISSION`：
+  - `ROLE` 项给出直接绑定角色 `boundRole`、经继承后承载权限点的角色 `role`、
+    权限点 `permission`、该权限点静态覆盖的去重操作 `operations` 及生效范围
+    `scope`；绑定角色与承载角色相同表示不经过继承。
+  - `DIRECT_PERMISSION` 项跳过角色层，`boundRole` 与 `role` 均为 `null`，只保留
+    主体直接权限点授权的权限点、操作与范围。
+- 只列出在 `effectiveAt` 同时满足主体角色归属、角色到权限点授权、主体授权范围
+  三层有效区间（半开 `[from,to)`）的路径；经角色继承到达的路径保留实际绑定角色
+  与承载角色。
+- 相同 `source`、`boundRole`、`role`、`permission`、`operations`、`scope` 只返回
+  一次（继承成菱形汇入同一角色时去重）。
+- 数组按 `source`、`boundRole`、`role`、`permission`、`operations`、`scope` 排序；
+  权限点操作集合按标识符字典序排列。
+- 没有任何生效路径时返回 `{"access":[]}`，不是错误。
+- 主体不存在返回 `NOT_FOUND` 且 `field` 为 `subject`；路径标识符非法返回
+  `INVALID_REQUEST` 且 `field` 为 `subject`；`effectiveAt` 不是合法 RFC3339 或超出
+  支持范围时返回 `INVALID_TIME` 且 `field` 为 `effectiveAt`。
+
 ## `GET /history`
 
 按三元组查询与之相关的授权变更，按 `effectiveFrom` 从早到晚排列；同一时刻按 `occurredAt`
