@@ -117,6 +117,39 @@ go run .
 角色层。同一时刻命中多条时，范围更具体者优先（精确 > 更长前缀 > 前缀 > `*`），再按权限点、
 角色标识字典序决胜。
 
+## `POST /authorize/explain`
+
+只读解释判定：请求体沿用 `POST /authorize` 的 `subject`、`resource`、
+`operation` 与可选 `effectiveAt`（省略时取服务当前时刻），返回顶层
+`effectiveAt`（判定时刻的规范 RFC3339 UTC 文本）、`decision`、`paths`。
+`decision` 与同一时刻调用 `POST /authorize` 的结果完全一致。
+
+```json
+{"effectiveAt":"2026-02-01T00:00:00Z",
+ "decision":{"granted":true,"matchedRole":"base","matchedPermission":"doc-read","matchedScope":"tenant-a/*"},
+ "paths":[
+  {"source":"ROLE","boundRole":"viewer","role":"base","permission":"doc-read","scope":"tenant-a/*"},
+  {"source":"DIRECT_PERMISSION","boundRole":null,"role":null,"permission":"doc-read","scope":"tenant-a/doc-1"}]}
+```
+
+- `paths` 列出该时刻完整覆盖资源与操作的全部授权路径，每项固定为 `source`、
+  `boundRole`、`role`、`permission`、`scope`，沿用资源反查的
+  `DIRECT_PERMISSION` 与 `ROLE` 口径：直接权限点路径两个角色字段均为 `null`；
+  角色路径的 `boundRole` 是主体直接绑定的角色，`role` 是经继承实际承载权限点
+  的角色。
+- 路径按完整字段组合去重并沿用资源反查的稳定排序（`source`、`boundRole`、
+  `role`、`permission`、`scope`）。多条同时命中时全部返回；`decision` 只报告
+  既有优先级（范围具体度、权限点、角色）选出的匹配。
+- 授权成功时 `paths` 非空且 `decision.granted` 为 `true`；拒绝时 `paths` 为
+  空数组 `[]`、`decision.granted` 为 `false`，`reason` 固定为
+  `NO_ROLE_BINDING`、`NO_PERMISSION_BINDING`、`OUT_OF_SCOPE`、`NOT_EFFECTIVE`
+  中的一个，口径与 `POST /authorize` 相同。
+- 入口只读，不写有效区间或变更历史，空命中正常返回 200。请求体不是 JSON 对象、
+  缺必填字段、含未知字段或标识符不合既有语法时返回 `INVALID_REQUEST`；合法但
+  目录不存在时按 `subject`、`resource`、`operation` 顺序返回 `NOT_FOUND`，
+  `field` 指明首个问题。`effectiveAt` 非法或超范围时唯一返回 `INVALID_TIME`
+  （`field` 为 `effectiveAt`），并优先于三元组检查。
+
 ## `GET /subjects/{id}/access`
 
 按可选时刻列出主体生效的授权路径（只读，不写入历史记录）。省略 `effectiveAt` 时查询当前
