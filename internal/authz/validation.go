@@ -8,14 +8,18 @@ func invalidRequest(field, message string) *Failure {
 
 // requireIdentifiers validates the subject/resource/operation triple grammar.
 func requireIdentifiers(subject, resource, operation string) *Failure {
+	return requirePrefixedIdentifiers(subject, resource, operation, "")
+}
+
+func requirePrefixedIdentifiers(subject, resource, operation, prefix string) *Failure {
 	if !validIdentifier(subject) {
-		return invalidRequest("subject", "field subject is not a parseable identifier")
+		return invalidRequest(prefix+"subject", "field subject is not a parseable identifier")
 	}
 	if !validIdentifier(resource) {
-		return invalidRequest("resource", "field resource is not a parseable identifier")
+		return invalidRequest(prefix+"resource", "field resource is not a parseable identifier")
 	}
 	if !validIdentifier(operation) {
-		return invalidRequest("operation", "field operation is not a parseable identifier")
+		return invalidRequest(prefix+"operation", "field operation is not a parseable identifier")
 	}
 	return nil
 }
@@ -23,6 +27,10 @@ func requireIdentifiers(subject, resource, operation string) *Failure {
 // checkTriple reports the first unknown member of the triple in the published
 // order subject, resource, operation.
 func (s *Service) checkTriple(subject, resource, operation string) *Failure {
+	return s.checkTripleWithFieldPrefix(subject, resource, operation, "")
+}
+
+func (s *Service) checkTripleWithFieldPrefix(subject, resource, operation, prefix string) *Failure {
 	for _, check := range []struct {
 		kind  store.CatalogKind
 		id    string
@@ -34,10 +42,10 @@ func (s *Service) checkTriple(subject, resource, operation string) *Failure {
 	} {
 		exists, err := s.store.Exists(check.kind, check.id)
 		if err != nil {
-			return failure(TypeInvalidRequest, check.field, "could not verify "+check.field)
+			return failure(TypeInvalidRequest, prefix+check.field, "could not verify "+check.field)
 		}
 		if !exists {
-			return failure(TypeNotFound, check.field, check.field+" does not exist")
+			return failure(TypeNotFound, prefix+check.field, check.field+" does not exist")
 		}
 	}
 	return nil

@@ -52,6 +52,7 @@ func NewRouter(st *store.Store) *gin.Engine {
 	router.DELETE("/subjects/:id/scopes", revokeScopeHandler(service))
 
 	router.POST("/authorize", authorizeHandler(service))
+	router.POST("/authorize/batch", authorizeBatchHandler(service))
 	router.POST("/authorize/explain", authorizeExplainHandler(service))
 	router.GET("/history", historyHandler(service))
 	router.GET("/subjects/:id/access", accessHandler(service))

@@ -1,7 +1,10 @@
 package api
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 
@@ -13,6 +16,17 @@ type authorizeRequestBody struct {
 	Resource    string `json:"resource"`
 	Operation   string `json:"operation"`
 	EffectiveAt string `json:"effectiveAt"`
+}
+
+type authorizeBatchRequestBody struct {
+	EffectiveAt json.RawMessage `json:"effectiveAt"`
+	Queries     json.RawMessage `json:"queries"`
+}
+
+type authorizeBatchQueryRequestBody struct {
+	Subject   string `json:"subject"`
+	Resource  string `json:"resource"`
+	Operation string `json:"operation"`
 }
 
 func authorizeHandler(service *authz.Service) gin.HandlerFunc {
@@ -34,6 +48,96 @@ func authorizeHandler(service *authz.Service) gin.HandlerFunc {
 		}
 		c.JSON(http.StatusOK, gin.H{"decision": decisionResponse(decision)})
 	}
+}
+
+func authorizeBatchHandler(service *authz.Service) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var body authorizeBatchRequestBody
+		if fail := readStrictJSONObject(c, &body); fail != nil {
+			writeFailure(c, fail)
+			return
+		}
+
+		effectiveAt := ""
+		if len(body.EffectiveAt) > 0 {
+			if fail := decodeStrictJSON(body.EffectiveAt, &effectiveAt, "effectiveAt"); fail != nil {
+				writeFailure(c, &authz.Failure{
+					Type:    authz.TypeInvalidTime,
+					Field:   "effectiveAt",
+					Message: "time must be an RFC3339 timestamp",
+				})
+				return
+			}
+			_, timeFail := authz.ParseTime(effectiveAt)
+			if timeFail != nil {
+				writeFailure(c, timeFail)
+				return
+			}
+		}
+		var rawQueries []json.RawMessage
+		if fail := decodeStrictJSON(body.Queries, &rawQueries, "queries"); fail != nil {
+			writeFailure(c, fail)
+			return
+		}
+		if len(rawQueries) == 0 || len(rawQueries) > 100 {
+			writeFailure(c, &authz.Failure{
+				Type:    authz.TypeInvalidRequest,
+				Field:   "queries",
+				Message: "queries must contain between 1 and 100 items",
+			})
+			return
+		}
+
+		queries := make([]authz.BatchDecisionQuery, len(rawQueries))
+		for index, rawQuery := range rawQueries {
+			var query authorizeBatchQueryRequestBody
+			prefix := "queries[" + jsonIndex(index) + "]."
+			if bytes.Equal(bytes.TrimSpace(rawQuery), []byte("null")) {
+				writeFailure(c, &authz.Failure{
+					Type:    authz.TypeInvalidRequest,
+					Field:   "queries[" + jsonIndex(index) + "]",
+					Message: "queries item must be a JSON object",
+				})
+				return
+			}
+			if fail := decodeStrictJSON(rawQuery, &query, prefix); fail != nil {
+				writeFailure(c, fail)
+				return
+			}
+			queries[index] = authz.BatchDecisionQuery{
+				Subject:   query.Subject,
+				Resource:  query.Resource,
+				Operation: query.Operation,
+			}
+		}
+
+		results, fail := service.DecideBatch(authz.BatchDecisionInput{
+			EffectiveAt: effectiveAt,
+			Queries:     queries,
+		})
+		if fail != nil {
+			writeFailure(c, fail)
+			return
+		}
+
+		decisions := make([]gin.H, 0, len(results))
+		for _, result := range results {
+			item := gin.H{
+				"subject":   result.Query.Subject,
+				"resource":  result.Query.Resource,
+				"operation": result.Query.Operation,
+			}
+			for key, value := range decisionResponse(result.Decision) {
+				item[key] = value
+			}
+			decisions = append(decisions, item)
+		}
+		c.JSON(http.StatusOK, gin.H{"decisions": decisions})
+	}
+}
+
+func jsonIndex(index int) string {
+	return strconv.Itoa(index)
 }
 
 func authorizeExplainHandler(service *authz.Service) gin.HandlerFunc {

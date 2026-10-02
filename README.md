@@ -117,6 +117,41 @@ go run .
 角色层。同一时刻命中多条时，范围更具体者优先（精确 > 更长前缀 > 前缀 > `*`），再按权限点、
 角色标识字典序决胜。
 
+## `POST /authorize/batch`
+
+在同一个可选时刻批量判定 1 到 100 个「主体 / 资源 / 操作」三元组。请求体只接受
+`effectiveAt` 与 `queries`；省略 `effectiveAt` 时整批共用服务当前时刻，否则共用同一个
+RFC3339 时刻。每个查询只含 `subject`、`resource`、`operation`，重复三元组不去重，结果严格
+按输入顺序返回。
+
+```json
+{"effectiveAt":"2026-02-01T00:00:00Z",
+ "queries":[
+  {"subject":"user-1","resource":"tenant-a/doc-1","operation":"read"},
+  {"subject":"user-1","resource":"tenant-b/doc-2","operation":"read"}]}
+```
+
+成功时：
+
+```json
+{"decisions":[
+  {"subject":"user-1","resource":"tenant-a/doc-1","operation":"read",
+   "granted":true,"matchedRole":"viewer","matchedPermission":"doc-read","matchedScope":"tenant-a/*"},
+  {"subject":"user-1","resource":"tenant-b/doc-2","operation":"read",
+   "granted":false,"reason":"OUT_OF_SCOPE"}]}
+```
+
+每个 `decision` 的获权与拒绝字段、`matchedRole: null` 语义、角色继承、权限点覆盖、范围匹配
+和半开区间均与同一时刻的 `POST /authorize` 完全一致；拒绝原因仍为 `NO_ROLE_BINDING`、
+`NO_PERMISSION_BINDING`、`OUT_OF_SCOPE`、`NOT_EFFECTIVE`。没有任何查询获权时仍返回 200。
+
+请求先校验顶层结构与 `effectiveAt`，再按下标依次校验并注册检查每个三元组；任一异常只返回
+单个 `error` 对象，不返回部分 `decisions`。`queries` 缺失、为空、超过 100 项、不是数组、
+单项缺失字段、含多余字段或标识符非法均返回 `INVALID_REQUEST`；`effectiveAt` 非法返回
+`INVALID_TIME`，且优先于所有单项检查。错误 `field` 使用 `queries`、`effectiveAt`、
+`queries[0].subject` 等定位值；合法但未注册成员按 `subject`、`resource`、`operation`
+顺序返回 `NOT_FOUND`。
+
 ## `POST /authorize/explain`
 
 只读解释一次授权判定：请求体沿用 `POST /authorize` 的 `subject`、`resource`、`operation`

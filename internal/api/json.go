@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -41,6 +42,78 @@ func readJSON(c *gin.Context, target any, optional bool) *authz.Failure {
 		return &authz.Failure{Type: authz.TypeInvalidRequest, Message: "request body contains more than one JSON value"}
 	}
 	return nil
+}
+
+func readStrictJSONObject(c *gin.Context, target any) *authz.Failure {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)
+	raw, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		return &authz.Failure{Type: authz.TypeInvalidRequest, Message: "request body is missing or too large"}
+	}
+	if strings.TrimSpace(string(raw)) == "" {
+		return &authz.Failure{Type: authz.TypeInvalidRequest, Message: "request body is empty"}
+	}
+	if fail := decodeStrictJSON(raw, target, ""); fail != nil {
+		return fail
+	}
+	return nil
+}
+
+func decodeStrictJSON(raw []byte, target any, prefix string) *authz.Failure {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		if field, ok := unknownJSONField(err); ok {
+			return &authz.Failure{
+				Type:    authz.TypeInvalidRequest,
+				Field:   prefix + field,
+				Message: "request body contains an unknown field",
+			}
+		}
+		if field, ok := jsonField(err); ok {
+			return &authz.Failure{
+				Type:    authz.TypeInvalidRequest,
+				Field:   prefix + field,
+				Message: fmt.Sprintf("request body field has the wrong type: %v", err),
+			}
+		}
+		return &authz.Failure{
+			Type:    authz.TypeInvalidRequest,
+			Field:   strings.TrimSuffix(prefix, "."),
+			Message: fmt.Sprintf("request body has the wrong shape: %v", err),
+		}
+	}
+	if decoder.More() {
+		return &authz.Failure{
+			Type:    authz.TypeInvalidRequest,
+			Field:   strings.TrimSuffix(prefix, "."),
+			Message: "request body contains more than one JSON value",
+		}
+	}
+	return nil
+}
+
+func unknownJSONField(err error) (string, bool) {
+	const marker = "json: unknown field \""
+	message := err.Error()
+	start := strings.Index(message, marker)
+	if start < 0 {
+		return "", false
+	}
+	start += len(marker)
+	end := strings.Index(message[start:], "\"")
+	if end < 0 {
+		return "", false
+	}
+	return message[start : start+end], true
+}
+
+func jsonField(err error) (string, bool) {
+	var typeError *json.UnmarshalTypeError
+	if !errors.As(err, &typeError) || typeError.Field == "" {
+		return "", false
+	}
+	return typeError.Field, true
 }
 
 func writeFailure(c *gin.Context, fail *authz.Failure) {

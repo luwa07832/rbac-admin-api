@@ -2,6 +2,7 @@ package authz
 
 import (
 	"sort"
+	"strconv"
 	"time"
 )
 
@@ -19,6 +20,26 @@ type DecisionInput struct {
 	Resource    string `json:"resource"`
 	Operation   string `json:"operation"`
 	EffectiveAt string `json:"effectiveAt,omitempty"`
+}
+
+// BatchDecisionInput is the payload for one batch authorization request.
+// Every query shares EffectiveAt and is evaluated independently in order.
+type BatchDecisionInput struct {
+	EffectiveAt string
+	Queries     []BatchDecisionQuery
+}
+
+// BatchDecisionQuery identifies one subject/resource/operation triple.
+type BatchDecisionQuery struct {
+	Subject   string
+	Resource  string
+	Operation string
+}
+
+// BatchDecision pairs one input query with its authorization decision.
+type BatchDecision struct {
+	Query    BatchDecisionQuery
+	Decision *Decision
 }
 
 // Match identifies the role-derived or direct authorization that explains a
@@ -58,6 +79,54 @@ func (s *Service) Decide(in DecisionInput) (*Decision, *Failure) {
 		return nil, failure(TypeInvalidRequest, "", "could not evaluate authorization")
 	}
 	return evaluate(snap, in.Resource, in.Operation, at), nil
+}
+
+// DecideBatch validates the complete batch before evaluating any query. The
+// shared effective moment is parsed once, then each query is checked and
+// evaluated in request order; duplicate queries are preserved.
+func (s *Service) DecideBatch(in BatchDecisionInput) ([]BatchDecision, *Failure) {
+	at := time.Now().UTC()
+	if in.EffectiveAt != "" {
+		parsed, fail := ParseTime(in.EffectiveAt)
+		if fail != nil {
+			return nil, fail
+		}
+		at = parsed
+	}
+	if len(in.Queries) == 0 || len(in.Queries) > 100 {
+		return nil, invalidRequest("queries", "queries must contain between 1 and 100 items")
+	}
+
+	snapshots := map[string]*snapshot{}
+	decisions := make([]BatchDecision, 0, len(in.Queries))
+	for index, query := range in.Queries {
+		prefix := batchFieldPrefix(index)
+		if fail := requirePrefixedIdentifiers(query.Subject, query.Resource, query.Operation, prefix); fail != nil {
+			return nil, fail
+		}
+		if fail := s.checkTripleWithFieldPrefix(query.Subject, query.Resource, query.Operation, prefix); fail != nil {
+			return nil, fail
+		}
+
+		snap, ok := snapshots[query.Subject]
+		if !ok {
+			loaded, err := s.loadSnapshot(query.Subject)
+			if err != nil {
+				return nil, failure(TypeInvalidRequest, "", "could not evaluate authorization")
+			}
+			snap = loaded
+			snapshots[query.Subject] = snap
+		}
+		decisions = append(decisions, BatchDecision{
+			Query:    query,
+			Decision: evaluate(snap, query.Resource, query.Operation, at),
+		})
+	}
+	return decisions, nil
+}
+
+func batchFieldPrefix(index int) string {
+	return "queries[" + strconv.Itoa(index) + "]."
 }
 
 // candidate is one authorization path that structurally covers the triple.
