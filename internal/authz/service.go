@@ -64,17 +64,24 @@ type snapshot struct {
 	rolePerm []rolePermRow
 	scopes   []scopeRow
 
-	// roleParents lists static parent roles in stored order.
-	roleParents map[string][]string
-	// permOperations lists the operations statically covered by permissions.
+	// roleModel holds the current inheritance graph and the static operation
+	// coverage of permissions; neither carries history intervals.
+	roleModel
+}
+
+// roleModel is the history-free read model shared by every query: the
+// current role inheritance graph in stored order and the operations
+// statically covered by each permission.
+type roleModel struct {
+	roleParents    map[string][]string
 	permOperations map[string]map[string]bool
 }
 
 func (s *Service) loadSnapshot(subject string) (*snapshot, error) {
-	snap := &snapshot{
+	snap := &snapshot{roleModel: roleModel{
 		roleParents:    map[string][]string{},
 		permOperations: map[string]map[string]bool{},
-	}
+	}}
 
 	bindingVersions, err := s.store.ListBindingVersions(subject)
 	if err != nil {
@@ -92,22 +99,11 @@ func (s *Service) loadSnapshot(subject string) (*snapshot, error) {
 		})
 	}
 
-	rolePermVersions, err := s.store.ListRolePermissionVersions()
+	rolePermRows, err := s.loadRolePermissionRows()
 	if err != nil {
 		return nil, err
 	}
-	for _, version := range rolePermVersions {
-		snap.rolePerm = append(snap.rolePerm, rolePermRow{
-			seq:           version.Seq,
-			roleID:        version.RoleID,
-			permissionID:  version.PermissionID,
-			event:         version.Event,
-			occurredAt:    version.OccurredAt,
-			effectiveFrom: version.EffectiveFrom,
-			effectiveTo:   version.EffectiveTo,
-			id:            version.ID,
-		})
-	}
+	snap.rolePerm = rolePermRows
 
 	scopeVersions, err := s.store.ListScopeVersions(subject)
 	if err != nil {
@@ -131,34 +127,71 @@ func (s *Service) loadSnapshot(subject string) (*snapshot, error) {
 		})
 	}
 
-	roleIDs, err := s.store.ListCatalog(store.CatalogRole)
+	model, err := s.loadRoleModel()
 	if err != nil {
 		return nil, err
+	}
+	snap.roleModel = model
+	return snap, nil
+}
+
+// loadRoleModel reads the current inheritance graph and static permission
+// operation coverage. Both are present-time definitions without intervals.
+func (s *Service) loadRoleModel() (roleModel, error) {
+	model := roleModel{
+		roleParents:    map[string][]string{},
+		permOperations: map[string]map[string]bool{},
+	}
+	roleIDs, err := s.store.ListCatalog(store.CatalogRole)
+	if err != nil {
+		return roleModel{}, err
 	}
 	for _, roleID := range roleIDs {
 		parents, err := s.store.RoleParents(roleID)
 		if err != nil {
-			return nil, err
+			return roleModel{}, err
 		}
-		snap.roleParents[roleID] = parents
+		model.roleParents[roleID] = parents
 	}
 
 	permissionIDs, err := s.store.ListCatalog(store.CatalogPermission)
 	if err != nil {
-		return nil, err
+		return roleModel{}, err
 	}
 	for _, permissionID := range permissionIDs {
 		operations, err := s.store.PermissionOperations(permissionID)
 		if err != nil {
-			return nil, err
+			return roleModel{}, err
 		}
 		set := map[string]bool{}
 		for _, operation := range operations {
 			set[operation] = true
 		}
-		snap.permOperations[permissionID] = set
+		model.permOperations[permissionID] = set
 	}
-	return snap, nil
+	return model, nil
+}
+
+// loadRolePermissionRows reads every role/permission grant interval version.
+func (s *Service) loadRolePermissionRows() ([]rolePermRow, error) {
+	rolePermVersions, err := s.store.ListRolePermissionVersions()
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]rolePermRow, 0, len(rolePermVersions))
+	for _, version := range rolePermVersions {
+		rows = append(rows, rolePermRow{
+			seq:           version.Seq,
+			roleID:        version.RoleID,
+			permissionID:  version.PermissionID,
+			event:         version.Event,
+			occurredAt:    version.OccurredAt,
+			effectiveFrom: version.EffectiveFrom,
+			effectiveTo:   version.EffectiveTo,
+			id:            version.ID,
+		})
+	}
+	return rows, nil
 }
 
 // resolveTimings resolves event and effective times. Both default to now;

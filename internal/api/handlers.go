@@ -69,6 +69,20 @@ func accessHandler(service *authz.Service) gin.HandlerFunc {
 	}
 }
 
+func rolePermissionsHandler(service *authz.Service) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		view, fail := service.RolePermissions(authz.RolePermissionsInput{
+			Role:        pathParam(c, "role"),
+			EffectiveAt: c.Query("effectiveAt"),
+		})
+		if fail != nil {
+			writeFailure(c, fail)
+			return
+		}
+		c.JSON(http.StatusOK, view)
+	}
+}
+
 func historyHandler(service *authz.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		subject := c.Query("subject")

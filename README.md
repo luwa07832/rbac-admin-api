@@ -146,6 +146,34 @@ GET /subjects/user-1/access?effectiveAt=2026-02-01T00:00:00Z
   `INVALID_REQUEST`（`field` 为 `subject`）；`effectiveAt` 不是合法 RFC3339 或超出支持
   范围时唯一返回 `INVALID_TIME`（`field` 为 `effectiveAt`）。
 
+## `GET /roles/{role}/permissions`
+
+脱离具体主体直接核对角色定义（只读，不写入历史记录）。省略 `effectiveAt` 时查询当前
+时刻；含 `/` 的角色标识符同样写作 `%2F`。角色继承关系没有历史区间，因此父关系展开始终
+使用当前继承图，只有角色与权限点授权按 `effectiveAt` 过滤。
+
+```
+GET /roles/viewer/permissions?effectiveAt=2026-02-01T00:00:00Z
+```
+
+```json
+{"effectiveAt":"2026-02-01T00:00:00Z","role":"viewer","parents":["base","mid"],
+ "inheritedRoles":["base","mid"],"permissions":[
+  {"role":"base","permission":"doc-read","operations":["read"],"source":"INHERITED"},
+  {"role":"viewer","permission":"doc-read","operations":["read"],"source":"DIRECT"}]}
+```
+
+- `parents` 是直接父角色，`inheritedRoles` 是从目标角色沿当前父关系可到达的全部祖先；
+  二者均按标识符字典序排列且不含目标角色，任一为空返回空数组。
+- `permissions` 展开目标角色及祖先角色在该时刻生效的权限点；`role` 是实际承载权限点的
+  角色，`operations` 是该权限点静态覆盖操作的去重字典序集合。目标角色自身授权的 `source`
+  为 `DIRECT`，祖先角色授权为 `INHERITED`。
+- 权限项按 `role`、`permission`、`operations` 稳定排序；没有生效权限点时返回
+  `{"permissions":[], ...}`，不视为错误。
+- 角色不存在返回 `NOT_FOUND`（`field` 为 `role`），路径标识符非法返回
+  `INVALID_REQUEST`（`field` 为 `role`）；`effectiveAt` 非法或超出范围时唯一返回
+  `INVALID_TIME`（`field` 为 `effectiveAt`），并优先于角色检查。
+
 ## `GET /history`
 
 按三元组查询与之相关的授权变更，按 `effectiveFrom` 从早到晚排列；同一时刻按 `occurredAt`

@@ -92,7 +92,7 @@ func listAccess(snap *snapshot, at string) []AccessItem {
 	items := []AccessItem{}
 	seen := map[string]bool{}
 	add := func(source, boundRole, role, permission, scope string) {
-		operations := sortedOperations(snap, permission)
+		operations := sortedOperations(snap.permOperations[permission])
 		key := strings.Join([]string{source, boundRole, role, permission, scope, strings.Join(operations, "\x00")}, "\x00")
 		if seen[key] {
 			return
@@ -134,9 +134,9 @@ func listAccess(snap *snapshot, at string) []AccessItem {
 
 // sortedOperations renders the permission's static operation set as a
 // deduplicated list ordered by identifier.
-func sortedOperations(snap *snapshot, permissionID string) []string {
+func sortedOperations(operationSet map[string]bool) []string {
 	operations := []string{}
-	for operation := range snap.permOperations[permissionID] {
+	for operation := range operationSet {
 		operations = append(operations, operation)
 	}
 	sort.Strings(operations)
