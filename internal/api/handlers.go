@@ -113,6 +113,22 @@ func resourceSubjectsHandler(service *authz.Service) gin.HandlerFunc {
 	}
 }
 
+func resourceSubjectsDiffHandler(service *authz.Service) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		view, fail := service.ResourceSubjectsDiff(authz.ResourceSubjectsDiffInput{
+			Resource:  pathParam(c, "resource"),
+			Operation: c.Query("operation"),
+			From:      c.Query("from"),
+			To:        c.Query("to"),
+		})
+		if fail != nil {
+			writeFailure(c, fail)
+			return
+		}
+		c.JSON(http.StatusOK, view)
+	}
+}
+
 func historyHandler(service *authz.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		subject := c.Query("subject")

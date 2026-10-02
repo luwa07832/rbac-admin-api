@@ -234,6 +234,42 @@ GET /resources/tenant-a%2Fdoc-1/subjects?operation=read&effectiveAt=2026-02-01T0
   返回 `INVALID_REQUEST`（`field` 分别为 `resource`、`operation`）；合法但不存在返回
   `NOT_FOUND`（`field` 分别为 `resource`、`operation`）。
 
+## `GET /resources/{resource}/subjects/diff`
+
+资源访问差异：只读对比「资源 / 操作」在两个时刻之间获权主体及其授权路径的变化，不写入
+变更历史。资源标识符含 `/` 时同样写作 `%2F`；`operation`、`from`、`to` 均由查询参数
+提供，`from` 与 `to` 必填且为 RFC3339 时间，起点等于终点时正常返回。
+
+```
+GET /resources/tenant-a%2Fdoc-1/subjects/diff?operation=read&from=2026-01-01T00:00:00Z&to=2026-04-01T00:00:00Z
+```
+
+```json
+{"from":"2026-01-01T00:00:00Z","to":"2026-04-01T00:00:00Z","resource":"tenant-a/doc-1","operation":"read",
+ "subjects":[
+  {"subject":"user-1",
+   "added":[
+    {"source":"DIRECT_PERMISSION","boundRole":null,"role":null,"permission":"doc-read","scope":"tenant-a/doc-1"}],
+   "removed":[],
+   "unchanged":[
+    {"source":"ROLE","boundRole":"viewer","role":"viewer","permission":"doc-read","scope":"tenant-a/*"}]}]}
+```
+
+- 两个时刻分别沿用资源反查的语义筛选：主体角色归属、沿当前父关系可达的角色权限点授权
+  或直接权限点授权、权限点覆盖 `operation`、授权范围覆盖 `resource`。
+- `subjects` 含任一时刻存在路径的主体，按主体标识符字典序排列；每主体下的 `added`、
+  `removed`、`unchanged` 始终输出为空数组而非省略。
+- `added` 仅含 `to` 时刻存在的路径，`removed` 仅含 `from` 时刻存在的路径，`unchanged`
+  含两个时刻都存在的路径。路径对象沿用资源反查的 `source`、`boundRole`、`role`、
+  `permission`、`scope` 结构，以完整字段组合判同一路径并去重，各数组沿用资源反查的
+  稳定排序。起止相同时全部路径进入 `unchanged`；没有匹配主体时返回 `{"subjects":[]}`，
+  空差异返回 200，不视为错误。
+- `from` 或 `to` 未提供、为空时返回 `INVALID_REQUEST`（`field` 分别为 `from`、`to`）；
+  值非法或超出支持范围时返回 `INVALID_TIME`，`from` 优先于 `to`；`from` 晚于 `to` 返回
+  `INVALID_RANGE`。时间参数校验之后，资源标识符非法或 `operation` 缺失、标识符非法
+  返回 `INVALID_REQUEST`（`field` 分别为 `resource`、`operation`）；合法但未注册返回
+  `NOT_FOUND`（`field` 分别为 `resource`、`operation`）。
+
 ## `GET /history`
 
 按三元组查询与之相关的授权变更，按 `effectiveFrom` 从早到晚排列；同一时刻按 `occurredAt`
