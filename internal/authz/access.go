@@ -92,20 +92,20 @@ func listAccess(snap *snapshot, at string) []AccessItem {
 	items := []AccessItem{}
 	seen := map[string]bool{}
 	add := func(source, boundRole, role, permission, scope string) {
-		operations := sortedOperations(snap.permOperations[permission])
-		key := strings.Join([]string{source, boundRole, role, permission, scope, strings.Join(operations, "\x00")}, "\x00")
-		if seen[key] {
-			return
-		}
-		seen[key] = true
-		items = append(items, AccessItem{
+		item := AccessItem{
 			Source:     source,
 			BoundRole:  nullable(boundRole),
 			Role:       nullable(role),
 			Permission: permission,
-			Operations: operations,
+			Operations: sortedOperations(snap.permOperations[permission]),
 			Scope:      scope,
-		})
+		}
+		key := accessKey(item)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		items = append(items, item)
 	}
 
 	for _, row := range snap.scopes {
@@ -130,6 +130,21 @@ func listAccess(snap *snapshot, at string) []AccessItem {
 
 	sort.SliceStable(items, func(i, j int) bool { return accessLess(items[i], items[j]) })
 	return items
+}
+
+// accessKey renders the complete
+// source/boundRole/role/permission/scope/operations combination that
+// identifies one path for deduplication and for comparing two moments.
+// Absent role fields sort as empty text.
+func accessKey(item AccessItem) string {
+	return strings.Join([]string{
+		item.Source,
+		pointerText(item.BoundRole),
+		pointerText(item.Role),
+		item.Permission,
+		item.Scope,
+		strings.Join(item.Operations, "\x00"),
+	}, "\x00")
 }
 
 // sortedOperations renders the permission's static operation set as a

@@ -146,6 +146,34 @@ GET /subjects/user-1/access?effectiveAt=2026-02-01T00:00:00Z
   `INVALID_REQUEST`（`field` 为 `subject`）；`effectiveAt` 不是合法 RFC3339 或超出支持
   范围时唯一返回 `INVALID_TIME`（`field` 为 `effectiveAt`）。
 
+## `GET /subjects/{subject}/access/diff`
+
+只读对比某主体在两个时刻之间的授权路径变化，不写入变更历史。主体标识符沿用既有语法，
+含 `/` 时写作 `%2F`。查询参数 `from`、`to` 均必填，分别为比较起点与终点，按半开有效
+区间语义取两个时刻各自生效的路径；`from` 等于 `to` 时全部路径归入 `unchanged`。
+
+```
+GET /subjects/user-1/access/diff?from=2026-02-01T00:00:00Z&to=2026-05-01T00:00:00Z
+```
+
+```json
+{"from":"2026-02-01T00:00:00Z","to":"2026-05-01T00:00:00Z",
+ "added":[{"source":"DIRECT_PERMISSION","boundRole":null,"role":null,"permission":"doc-read","operations":["read"],"scope":"tenant-b/doc-2"}],
+ "removed":[{"source":"ROLE","boundRole":"viewer","role":"viewer","permission":"doc-read","operations":["read"],"scope":"tenant-a/doc-1"}],
+ "unchanged":[{"source":"ROLE","boundRole":"viewer","role":"viewer","permission":"doc-read","operations":["read"],"scope":"tenant-a/*"}]}
+```
+
+- `added`、`removed`、`unchanged` 依次表示仅在 `to` 存在、仅在 `from` 存在、两个时刻都
+  存在的路径；以完整的 `source`、`boundRole`、`role`、`permission`、`operations`、`scope`
+  组合判同一路径并去重，各数组沿用 access 列表的稳定排序。
+- 路径对象结构与 `GET /subjects/{id}/access` 完全一致；`from`、`to` 回显规范化后的 UTC
+  时间。没有变化时三个数组均为空数组，不视为错误。
+- `from` 或 `to` 未提供、为空时返回 `INVALID_REQUEST`，`field` 分别为 `from`、`to`；
+  值非法或超出服务支持范围时返回 `INVALID_TIME`，并按 `from` 优先于 `to` 报告。
+- `from` 晚于 `to` 返回 `INVALID_RANGE`（不带 `field`）。时间参数校验全部通过后，主体
+  标识符非法返回 `INVALID_REQUEST`（`field` 为 `subject`），合法但不存在返回 `NOT_FOUND`
+  （`field` 为 `subject`）。
+
 ## `GET /roles/{role}/permissions`
 
 脱离具体主体直接核对角色定义（只读，不写入历史记录）。省略 `effectiveAt` 时查询当前
