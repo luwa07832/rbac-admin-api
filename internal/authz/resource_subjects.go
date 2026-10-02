@@ -143,7 +143,7 @@ func subjectGrantPaths(bindings []bindingRow, scopes []scopeRow, rolePerm []role
 	paths := []SubjectPath{}
 	seen := map[string]bool{}
 	add := func(source, boundRole, role, permission, scope string) {
-		key := strings.Join([]string{source, boundRole, role, permission, scope}, "\x00")
+		key := subjectPathKey(source, boundRole, role, permission, scope)
 		if seen[key] {
 			return
 		}
@@ -199,4 +199,17 @@ func subjectPathLess(a, b SubjectPath) bool {
 		return a.Permission < b.Permission
 	}
 	return a.Scope < b.Scope
+}
+
+// subjectPathKey renders one grant path's full field combination with a
+// separator that no identifier text can contain; the diff queries reuse it to
+// decide whether the same path is effective at both moments.
+func subjectPathKey(source, boundRole, role, permission, scope string) string {
+	return strings.Join([]string{source, boundRole, role, permission, scope}, "\x00")
+}
+
+// pathKey renders a SubjectPath value's identity combination.
+func pathKey(path SubjectPath) string {
+	return subjectPathKey(path.Source, pointerText(path.BoundRole), pointerText(path.Role),
+		path.Permission, path.Scope)
 }

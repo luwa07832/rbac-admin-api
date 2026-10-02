@@ -234,6 +234,40 @@ GET /resources/tenant-a%2Fdoc-1/subjects?operation=read&effectiveAt=2026-02-01T0
   返回 `INVALID_REQUEST`（`field` 分别为 `resource`、`operation`）；合法但不存在返回
   `NOT_FOUND`（`field` 分别为 `resource`、`operation`）。
 
+## `GET /resources/{resource}/subjects/diff`
+
+只读对比某「资源 / 操作」在两个时刻之间获权主体及其授权路径的变化，不写入变更历史。
+`from` 与 `to` 均必填，为 RFC3339 时间，分别给出比较的起点与终点；资源标识符沿用既有
+语法，含 `/` 时写作 `%2F`，操作通过查询参数 `operation` 传入。起点等于终点时正常返回，
+全部路径进入 `unchanged`。
+
+```
+GET /resources/tenant-a%2Fdoc-1/subjects/diff?operation=read&from=2026-02-01T00:00:00Z&to=2026-04-01T00:00:00Z
+```
+
+```json
+{"from":"2026-02-01T00:00:00Z","to":"2026-04-01T00:00:00Z","resource":"tenant-a/doc-1","operation":"read",
+ "subjects":[
+  {"subject":"user-1",
+   "added":[{"source":"DIRECT_PERMISSION","boundRole":null,"role":null,"permission":"doc-read","scope":"tenant-a/doc-1"}],
+   "removed":[{"source":"ROLE","boundRole":"editor","role":"editor","permission":"doc-read","scope":"*"}],
+   "unchanged":[{"source":"ROLE","boundRole":"viewer","role":"base","permission":"doc-read","scope":"tenant-a/*"}]}]}
+```
+
+- 每个时刻都按资源反查的既有语义筛选：主体角色归属、沿当前父关系可达的角色权限点授权
+  （或直接权限点授权）、权限点静态覆盖 `operation` 且授权范围覆盖 `resource`，三层均处于
+  半开有效区间内。
+- 路径对象沿用资源反查的 `source`、`boundRole`、`role`、`permission`、`scope` 结构，以
+  完整字段组合判同一路径并去重；`added` 仅含 `to` 时刻存在的路径，`removed` 仅含 `from`
+  时刻存在的路径，`unchanged` 含两个时刻都存在的路径。
+- `subjects` 按主体标识符字典序排列并含任一时刻存在路径的主体；各数组沿用资源反查的
+  稳定排序。没有任何主体获权时返回 `{"subjects":[]}`，空差异返回 200，均不视为错误。
+- `from` 或 `to` 未提供、为空时返回 `INVALID_REQUEST`（`field` 分别为 `from`、`to`）；
+  值非法或超出支持范围时返回 `INVALID_TIME`，`from` 优先于 `to`；`from` 晚于 `to` 返回
+  `INVALID_RANGE`。时间参数校验之后，资源标识符非法或 `operation` 缺失、标识符非法返回
+  `INVALID_REQUEST`（`field` 分别为 `resource`、`operation`）；合法但未注册返回 `NOT_FOUND`
+  （`field` 分别为 `resource`、`operation`）。查询只读，不改变后续授权判定。
+
 ## `GET /history`
 
 按三元组查询与之相关的授权变更，按 `effectiveFrom` 从早到晚排列；同一时刻按 `occurredAt`
@@ -267,7 +301,7 @@ GET /history?subject=user-1&resource=tenant-a%2Fdoc-1&operation=read&from=2026-0
 |---|---|---|
 | `NOT_FOUND` | 404 | 主体、资源、操作（或写入引用的角色、权限点）不存在，`field` 标明 `subject`/`resource`/`operation`/`role`/`permission` |
 | `INVALID_TIME` | 400 | 时间字段不是合法 RFC3339 或超出支持范围 |
-| `INVALID_RANGE` | 400 | 历史查询区间起点晚于终点 |
+| `INVALID_RANGE` | 400 | 历史或差异查询区间起点晚于终点 |
 | `INVALID_REQUEST` | 400 | 空请求体、JSON 语法/类型错误、未知字段、非法标识符或范围、引用缺失、角色继承成环等 |
 | `CONFLICT` | 409 | 同一身份已存在当前有效的区间 |
 
