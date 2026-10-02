@@ -55,6 +55,20 @@ func nullableJSON(value string) any {
 	return value
 }
 
+func accessHandler(service *authz.Service) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		items, fail := service.Access(authz.AccessInput{
+			Subject:     pathParam(c, "id"),
+			EffectiveAt: c.Query("effectiveAt"),
+		})
+		if fail != nil {
+			writeFailure(c, fail)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"access": items})
+	}
+}
+
 func historyHandler(service *authz.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		subject := c.Query("subject")
