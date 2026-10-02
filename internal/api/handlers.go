@@ -36,6 +36,31 @@ func authorizeHandler(service *authz.Service) gin.HandlerFunc {
 	}
 }
 
+func authorizeExplainHandler(service *authz.Service) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var body authorizeRequestBody
+		if fail := readJSON(c, &body, false); fail != nil {
+			writeFailure(c, fail)
+			return
+		}
+		view, fail := service.Explain(authz.DecisionInput{
+			Subject:     body.Subject,
+			Resource:    body.Resource,
+			Operation:   body.Operation,
+			EffectiveAt: body.EffectiveAt,
+		})
+		if fail != nil {
+			writeFailure(c, fail)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"effectiveAt": view.EffectiveAt,
+			"decision":    decisionResponse(view.Decision),
+			"paths":       view.Paths,
+		})
+	}
+}
+
 func decisionResponse(decision *authz.Decision) gin.H {
 	if decision.Granted {
 		return gin.H{
