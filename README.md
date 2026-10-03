@@ -158,6 +158,56 @@ RFC3339 时刻，输出规范化为 UTC。`queries` 是 1 到 100 项的数组�
   subject、resource、operation 顺序检查，`field` 使用 `queries[0].subject` 这样的定位值，
   下标从 0 开始并按数组顺序报告首个问题。
 
+## `POST /authorize/batch/explain`
+
+在同一个时刻对多组「主体 / 资源 / 操作」三元组同时给出判定与全部授权路径。请求体沿用
+`POST /authorize/batch`：只含可选的 `effectiveAt` 与必填的 `queries`；`effectiveAt`
+省略（或为 `null`）时表示当前时刻，否则是整批共用的 RFC3339 时刻，输出规范化为 UTC。
+`queries` 是 1 到 100 项的数组，每项只含 `subject`、`resource`、`operation` 三个字符串
+字段，标识符沿用既有语法。
+
+```json
+{"effectiveAt":"2026-02-01T00:00:00Z","queries":[
+  {"subject":"user-1","resource":"tenant-a/doc-1","operation":"read"},
+  {"subject":"user-2","resource":"tenant-a/doc-1","operation":"read"}]}
+```
+
+成功返回 200，顶层为规范化后的 `effectiveAt` 与 `explanations` 数组；`explanations`
+顺序与 `queries` 完全一致，重复三元组不合并：
+
+```json
+{"effectiveAt":"2026-02-01T00:00:00Z","explanations":[
+  {"subject":"user-1","resource":"tenant-a/doc-1","operation":"read",
+   "decision":{"granted":true,"matchedRole":null,"matchedPermission":"doc-read","matchedScope":"tenant-a/doc-1"},
+   "paths":[
+    {"source":"DIRECT_PERMISSION","boundRole":null,"role":null,"permission":"doc-read","scope":"tenant-a/doc-1"},
+    {"source":"ROLE","boundRole":"viewer","role":"base","permission":"doc-read","scope":"tenant-a/*"}]},
+  {"subject":"user-2","resource":"tenant-a/doc-1","operation":"read",
+   "decision":{"granted":false,"reason":"NO_ROLE_BINDING"},"paths":[]}]}
+```
+
+- 每项都回显自己的 `subject`、`resource`、`operation`，并附 `decision` 与 `paths`。
+  `decision` 与同一 `effectiveAt` 调用 `POST /authorize` 的结果逐字段一致；`paths` 与同一
+  请求调用 `POST /authorize/explain` 的路径逐字段一致，沿用 `source`（`DIRECT_PERMISSION`、
+  `ROLE`）、`boundRole`、`role`、`permission`、`scope` 结构、完整字段组合去重与稳定排序。
+- 授权时 `decision.granted` 为 `true` 且 `paths` 非空；拒绝时 `decision.granted` 为
+  `false`，`reason` 固定为 `NO_ROLE_BINDING`、`NO_PERMISSION_BINDING`、`OUT_OF_SCOPE`、
+  `NOT_EFFECTIVE` 之一，且 `paths` 为空数组。
+- 整批原子返回：角色继承、权限点静态覆盖、范围匹配与半开区间语义全部沿用单笔判定与单笔
+  解释；整批共享同一 UTC 时刻，任一异常都只返回单个 `error` 对象，不返回部分
+  `explanations`。该入口只读，不写有效区间或变更历史，不影响后续授权。
+- 校验顺序与错误定位完全沿用 `POST /authorize/batch`：先校验整批结构，再解析
+  `effectiveAt`，最后按下标逐项校验。`queries` 缺失、不是数组、为空或超过 100 项，请求体
+  不是 JSON 对象、含未知顶层字段，均返回 `INVALID_REQUEST`（结构问题的 `field` 为
+  `queries` 或该未知字段名，单项问题使用 `queries[0].subject` 这样的定位值）；
+  `effectiveAt` 已给出但不是字符串、不是合法 RFC3339 时间或超出支持范围时唯一返回
+  `INVALID_TIME`（`field` 为 `effectiveAt`），优先于一切 `queries` 单项检查，但整批结构
+  错误仍优先于 `effectiveAt`。
+- 单项不是对象、缺字段、多字段（含未知字段）或字段类型错误、标识符非法返回
+  `INVALID_REQUEST`；三元组合法但目录不存在时返回 `NOT_FOUND`，按 subject、resource、
+  operation 顺序报告首个缺失项并带下标（如 `queries[2].resource`）。错误响应只有 400 或
+  404 与单个顶层 `error` 对象，不返回 `explanations`。
+
 ## `POST /authorize/explain`
 
 只读解释一次授权判定：请求体沿用 `POST /authorize` 的 `subject`、`resource`、`operation`

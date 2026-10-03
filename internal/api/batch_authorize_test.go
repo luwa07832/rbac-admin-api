@@ -388,9 +388,29 @@ func TestAuthorizeBatchSingleEntryUnchanged(t *testing.T) {
 		t.Fatalf("batch %v != single %v", envelope.Decisions[0].Decision, single)
 	}
 
-	recorder = h.request(http.MethodPost, "/authorize/batch/explain",
-		map[string]any{"subject": "user-1"})
-	if recorder.Code != http.StatusNotFound {
-		t.Fatalf("batch/explain status = %d", recorder.Code)
+	recorder = h.request(http.MethodPost, "/authorize/explain", map[string]any{
+		"subject": "user-1", "resource": "tenant-a/doc-1", "operation": "read",
+		"effectiveAt": "2026-02-01T00:00:00Z",
+	})
+	h.mustStatus(recorder, http.StatusOK)
+	singleExplain := mustJSON(t, recorder)
+	recorder = h.request(http.MethodPost, "/authorize/batch/explain", map[string]any{
+		"effectiveAt": "2026-02-01T00:00:00Z",
+		"queries": []any{map[string]any{
+			"subject": "user-1", "resource": "tenant-a/doc-1", "operation": "read",
+		}},
+	})
+	h.mustStatus(recorder, http.StatusOK)
+	batchExplain := mustJSON(t, recorder)
+	explanations := batchExplain["explanations"].([]any)
+	item := explanations[0].(map[string]any)
+	if fmt.Sprint(item["decision"]) != fmt.Sprint(singleExplain["decision"]) {
+		t.Fatalf("batch explain decision %v != single %v", item["decision"], singleExplain["decision"])
+	}
+	if fmt.Sprint(item["paths"]) != fmt.Sprint(singleExplain["paths"]) {
+		t.Fatalf("batch explain paths %v != single %v", item["paths"], singleExplain["paths"])
+	}
+	if batchExplain["effectiveAt"] != singleExplain["effectiveAt"] {
+		t.Fatalf("effectiveAt = %v, want %v", batchExplain["effectiveAt"], singleExplain["effectiveAt"])
 	}
 }

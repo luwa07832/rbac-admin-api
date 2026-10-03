@@ -54,6 +54,50 @@ func authorizeBatchHandler(service *authz.Service) gin.HandlerFunc {
 	}
 }
 
+type batchExplainItem struct {
+	Subject   string              `json:"subject"`
+	Resource  string              `json:"resource"`
+	Operation string              `json:"operation"`
+	Decision  gin.H               `json:"decision"`
+	Paths     []authz.SubjectPath `json:"paths"`
+}
+
+// authorizeBatchExplainHandler serves POST /authorize/batch/explain. It shares
+// the batch structure and per-query validation with POST /authorize/batch and
+// returns one explanation per query in input order; any failure is one error
+// object without partial explanations.
+func authorizeBatchExplainHandler(service *authz.Service) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		effectiveAt, queries, fail := readBatchRequest(c)
+		if fail != nil {
+			writeFailure(c, fail)
+			return
+		}
+		view, fail := service.BatchExplain(authz.BatchInput{
+			EffectiveAtText: effectiveAt,
+			Queries:         queries,
+		})
+		if fail != nil {
+			writeFailure(c, fail)
+			return
+		}
+		explanations := make([]batchExplainItem, len(view.Explanations))
+		for index, item := range view.Explanations {
+			explanations[index] = batchExplainItem{
+				Subject:   item.Subject,
+				Resource:  item.Resource,
+				Operation: item.Operation,
+				Decision:  decisionResponse(item.Decision),
+				Paths:     item.Paths,
+			}
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"effectiveAt":  view.EffectiveAt,
+			"explanations": explanations,
+		})
+	}
+}
+
 // readBatchRequest performs the batch-level checks: the body must be one JSON
 // object with only effectiveAt and queries, queries must be a non-empty array
 // of at most 100 entries, and an effectiveAt that is present and non-null
