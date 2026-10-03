@@ -158,6 +158,57 @@ RFC3339 时刻，输出规范化为 UTC。`queries` 是 1 到 100 项的数组�
   subject、resource、operation 顺序检查，`field` 使用 `queries[0].subject` 这样的定位值，
   下标从 0 开始并按数组顺序报告首个问题。
 
+## `POST /authorize/batch/explain`
+
+在同一个时刻批量解释多组「主体 / 资源 / 操作」三元组的判定与全部授权路径。请求体沿用
+`POST /authorize/batch`：只含可选的 `effectiveAt` 与必填的 `queries`；`effectiveAt` 省略
+（或为 `null`）时表示当前时刻，否则是整批共用的 RFC3339 时刻，输出规范化为 UTC。
+`queries` 是 1 到 100 项的数组，每项只含 `subject`、`resource`、`operation` 三个字符串
+字段，标识符沿用既有语法。入口只读，不写有效区间或变更历史，不影响后续授权判定。
+
+```json
+{"effectiveAt":"2026-02-01T00:00:00Z","queries":[
+  {"subject":"user-1","resource":"tenant-a/doc-1","operation":"read"},
+  {"subject":"user-2","resource":"tenant-a/doc-1","operation":"read"}]}
+```
+
+成功返回 200，顶层为规范化的 `effectiveAt` 与 `explanations` 数组，后者顺序与 `queries`
+完全一致，重复三元组不合并；每项回显自己的 `subject`、`resource`、`operation`、`decision`
+与 `paths`：
+
+```json
+{"effectiveAt":"2026-02-01T00:00:00Z","explanations":[
+  {"subject":"user-1","resource":"tenant-a/doc-1","operation":"read",
+   "decision":{"granted":true,"matchedRole":null,"matchedPermission":"doc-read","matchedScope":"tenant-a/doc-1"},
+   "paths":[
+    {"source":"DIRECT_PERMISSION","boundRole":null,"role":null,"permission":"doc-read","scope":"tenant-a/doc-1"},
+    {"source":"ROLE","boundRole":"viewer","role":"base","permission":"doc-read","scope":"tenant-a/*"}]},
+  {"subject":"user-2","resource":"tenant-a/doc-1","operation":"read",
+   "decision":{"granted":false,"reason":"NO_ROLE_BINDING"},"paths":[]}]}
+```
+
+- `decision` 与同一 `effectiveAt` 调用 `POST /authorize` 的结果逐字段一致：获权时为
+  `granted true` 加 `matchedRole`、`matchedPermission`、`matchedScope`（直接权限点命中时
+  `matchedRole` 为 `null`），拒绝时只有 `granted false` 与 `reason`，`reason` 固定为
+  `NO_ROLE_BINDING`、`NO_PERMISSION_BINDING`、`OUT_OF_SCOPE`、`NOT_EFFECTIVE` 之一。
+- `paths` 与同一时刻调用 `POST /authorize/explain` 的结果逐字段一致：每项固定为
+  `source`、`boundRole`、`role`、`permission`、`scope`，保留 `DIRECT_PERMISSION`、`ROLE`、
+  `boundRole`、`role`、`permission`、`scope` 结构与资源反查的稳定排序，按完整字段组合
+  去重，多条同时命中时全部返回。
+- 授权时 `decision.granted` 为 `true` 且 `paths` 非空；拒绝时 `decision.granted` 为
+  `false` 且 `paths` 为空数组。角色继承、权限点静态覆盖、范围匹配与半开区间语义全部沿用
+  单笔判定；无人获权是正常结果，不视为错误。
+- 整批原子返回。校验顺序固定：先校验整批结构，再校验共用的 `effectiveAt`，最后按下标逐项
+  校验；任一异常都只返回单个 `error` 对象和 400 或 404，不返回部分 `explanations`。
+- 请求体不是 JSON 对象、含未知顶层字段，或 `queries` 缺失、不是数组、为空、超过 100 项，
+  均返回 `INVALID_REQUEST`（`field` 为 `queries` 或该未知字段名），且整批结构错误优先于
+  `effectiveAt`；`effectiveAt` 已给出但不是字符串、不是合法 RFC3339 时间或超出支持范围时
+  唯一返回 `INVALID_TIME`（`field` 为 `effectiveAt`），并优先于一切单项检查。
+- 单项不是对象、缺字段、多字段（含未知字段）或字段类型错误返回 `INVALID_REQUEST`；
+  标识符非法返回 `INVALID_REQUEST`；三元组合法但目录不存在时返回 `NOT_FOUND`。单项按
+  subject、resource、operation 顺序检查，`field` 使用 `queries[0].subject` 这样的定位值，
+  下标从 0 开始并按数组顺序报告首个问题。
+
 ## `POST /authorize/explain`
 
 只读解释一次授权判定：请求体沿用 `POST /authorize` 的 `subject`、`resource`、`operation`

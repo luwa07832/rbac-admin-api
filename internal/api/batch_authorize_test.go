@@ -388,9 +388,14 @@ func TestAuthorizeBatchSingleEntryUnchanged(t *testing.T) {
 		t.Fatalf("batch %v != single %v", envelope.Decisions[0].Decision, single)
 	}
 
+	// The batch explain entry uses the same batch shape as batch authorize;
+	// a single-explain body without queries is an INVALID_REQUEST, not a route
+	// miss.
 	recorder = h.request(http.MethodPost, "/authorize/batch/explain",
 		map[string]any{"subject": "user-1"})
-	if recorder.Code != http.StatusNotFound {
-		t.Fatalf("batch/explain status = %d", recorder.Code)
+	h.mustStatus(recorder, http.StatusBadRequest)
+	errorObject := mustJSON(t, recorder)["error"].(map[string]any)
+	if errorObject["type"] != "INVALID_REQUEST" || errorObject["field"] != "subject" {
+		t.Fatalf("batch/explain error = %v", errorObject)
 	}
 }
